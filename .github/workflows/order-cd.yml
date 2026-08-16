@@ -1,0 +1,146 @@
+# =============================================================================
+# Order CD — delivery on merge to master
+# =============================================================================
+# CD half of the per-service pattern (ADR-023) — a copy of products-cd.yml with
+# only the Order specifics changed. Immutable SHA-tagged image, OIDC push to ACR
+# (no secret), then bump .image.tag in the values file for Argo CD. No helm/kubectl.
+#
+# Loop prevention: tag-bump touches only deploy/helm/values/** (outside this
+# filter); CI is pull_request-only; commit carries [skip ci]. Push via PAT
+# (CD_PUSH_TOKEN) — path filter is the loop guard, not the token.
+# =============================================================================
+
+name: Order CD
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'AK.Order/**'
+      - 'AK.BuildingBlocks/**'
+      # Documentation-only changes inside a service folder (e.g. *.md) do NOT
+      # trigger delivery. The negation must be LAST — later patterns win in
+      # GitHub Actions path filters.
+      - '!**/*.md'
+
+# Permissions are scoped PER JOB (least privilege), not at workflow level —
+# surfaced by SonarCloud (a workflow-level write grants it to every job).
+# build-and-push needs id-token: write for the Azure OIDC login; update-gitops
+# pushes with the CD_PUSH_TOKEN PAT (not GITHUB_TOKEN), so contents: read
+# suffices. See each job's permissions below.
+
+concurrency:
+  group: order-cd
+  cancel-in-progress: false
+
+env:
+  ACR_NAME: acrantkartdev
+  REGISTRY: acrantkartdev.azurecr.io
+  IMAGE_REPO: antkart/order
+  DOCKERFILE: AK.Order/AK.Order.API/Dockerfile
+  VALUES_FILE: deploy/helm/values/order.yaml
+
+jobs:
+  build-and-push:
+    name: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for azure/login (secret-less Azure auth)
+      contents: read    # checkout only
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Build image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build \
+            -f "$DOCKERFILE" \
+            -t "$REGISTRY/$IMAGE_REPO:$TAG" \
+            -t "$REGISTRY/$IMAGE_REPO:latest" \
+            .
+
+      - name: Push image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker push "$REGISTRY/$IMAGE_REPO:$TAG"
+          docker push "$REGISTRY/$IMAGE_REPO:latest"
+
+  update-gitops:
+    name: update-gitops
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # git push uses the CD_PUSH_TOKEN PAT, not GITHUB_TOKEN
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: master
+          token: ${{ secrets.CD_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Bump image tag in values
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          yq -i '.image.tag = strenv(TAG)' "$VALUES_FILE"
+          echo "----- updated $VALUES_FILE -----"
+          yq '.image' "$VALUES_FILE"
+
+      - name: Commit and push tag bump
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$VALUES_FILE"
+          if git diff --cached --quiet; then
+            echo "image tag already $TAG — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(cd): order image -> $TAG [skip ci]"
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:master; then
+              pushed=true
+              break
+            fi
+            echo "push rejected (attempt $attempt) - rebasing onto latest master"
+            git pull --rebase origin master
+          done
+
+          if [ "$pushed" != "true" ]; then
+            echo "::error::failed to push tag bump after 5 attempts" >&2
+            exit 1
+          fi
+
+      - name: Verify tag bump landed on master
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          git fetch origin master
+          remote_tag=$(git show "FETCH_HEAD:$VALUES_FILE" | yq '.image.tag')
+          echo "master $VALUES_FILE image.tag = $remote_tag (expected $TAG)"
+          if [ "$remote_tag" != "$TAG" ]; then
+            echo "::error::tag bump did not land on master ($remote_tag != $TAG)" >&2
+            exit 1
+          fi

@@ -1,0 +1,16 @@
+# AK.Payments.API — REST payment service (PostgreSQL + Razorpay).
+name: ak-payments
+serviceName: payments
+workloadIdentityClientId: "31c739a1-51f3-4e4d-b322-5df23dc66177"
+env:
+  ServiceBus__FullyQualifiedNamespace: "sb-antkart-dev.servicebus.windows.net"
+  EventGrid__TopicEndpoint: "https://evgt-antkart-dev.eastus-1.eventgrid.azure.net/api/events"
+  # ConnectionStrings:PaymentsDb (mandatory — no committed default) and the
+  # Razorpay KeyId/KeySecret are secrets, resolved from Key Vault at runtime.
+  # Microsoft Entra ID JWT validation (AddEntraAuthentication binds the Entra section).
+  Entra__Instance: "https://login.microsoftonline.com"
+  Entra__TenantId: "4cacc56a-0d38-46c4-ba20-429d51d7b449"
+  Entra__Audience: "api://antkart-api-dev"
+  Entra__ClientId: "ea22550b-a0ae-4847-a2e2-2524752d9522"
+image:
+  tag: "84b0ff9"

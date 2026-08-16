@@ -1,0 +1,123 @@
+# =============================================================================
+# antkart-service — default values
+# =============================================================================
+# These are DEFAULTS shared by every service. A per-service values file
+# (deploy/helm/values/<service>.yaml) supplies the service-specific pieces:
+# name, serviceName, workloadIdentityClientId, and any extra env / ocelot config.
+# Helm deep-merges the per-service `env` map on top of the defaults below.
+
+# name        — the in-cluster identity: ServiceAccount, Deployment and Service
+#               are all named this (the ak-<service> convention). REQUIRED per service.
+# serviceName — the short service name; the container name and the ACR image path
+#               (antkart/<serviceName>) are derived from it. REQUIRED per service.
+name: ""
+serviceName: ""
+
+namespace: antkart
+
+replicaCount: 1
+
+# The user-assigned managed identity's client id, injected onto the ServiceAccount
+# as the azure.workload.identity/client-id annotation. Supplied per service from
+# values — never hardcoded in a template. REQUIRED per service.
+workloadIdentityClientId: ""
+
+image:
+  registry: acrantkartdev.azurecr.io
+  # The image path is <registry>/antkart/<name>, where <name> is `image.name` when
+  # set, otherwise it falls back to `serviceName`.
+  #
+  # WHY image.name is separate from serviceName: serviceName drives the in-cluster
+  # identity — the ServiceAccount is named ak-<serviceName>, which MUST exactly match
+  # the federated identity credential subject (system:serviceaccount:antkart:ak-<serviceName>).
+  # Renaming serviceName to match a registry repository would silently break workload
+  # identity. The image path, by contrast, must match whatever repository actually
+  # exists in ACR. These usually coincide, but not always (e.g. serviceName "cart" vs
+  # ACR repository "antkart/shoppingcart") — set image.name in that case.
+  name: ""
+  tag: dev
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  port: 8080
+  portName: http
+  # appProtocol is a hint only for a ClusterIP (L4) Service; set for the gRPC
+  # service so future ingress / mesh treats it as HTTP/2. Empty for REST services.
+  appProtocol: ""
+
+# Probe strategy for a .NET service that loads Azure Key Vault at startup:
+#   * A startupProbe gives the process up to failureThreshold*periodSeconds to
+#     come up (Key Vault load + Kestrel bind can take several seconds) WITHOUT the
+#     livenessProbe killing it mid-boot — liveness/readiness only begin once the
+#     startupProbe first succeeds.
+#   * livenessProbe hits /health/live (shallow — no external calls, so a
+#     dependency blip never triggers a restart storm).
+#   * readinessProbe hits /health/ready (tolerant — Degraded still returns 200).
+# type: "http" (REST services) or "tcp" (AK.Discount, which serves h2c/HTTP-2 only,
+# so an HTTP/1.1 httpGet probe would be rejected — see the README).
+probes:
+  type: http
+  startup:
+    periodSeconds: 5
+    failureThreshold: 30   # up to ~150s to finish booting
+  liveness:
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Sized for 1 replica each of six services on 2 x Standard_D2s_v3 (2 vCPU / 8 GiB
+# per node). Six services: requests 6*100m = 600m CPU, 6*192Mi ≈ 1.13Gi memory —
+# well within node allocatable; limits allow bursts without overcommitting.
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Non-secret configuration rendered into a ConfigMap and injected via envFrom.
+# .NET maps `__` to the `:` configuration separator (KeyVault__Uri -> KeyVault:Uri).
+# SECRETS ARE NOT HERE — connection strings / API keys are read from Key Vault at
+# runtime via the pod's workload identity. Only genuinely common keys live here;
+# per-service values add what that service actually reads (Entra JWT settings, DNS
+# overrides, Service Bus, etc.). Every service reads Key Vault, so KeyVault__Uri is
+# the one shared default. Entra__* is NOT here on purpose: AK.Discount does not bind
+# the Entra section (its gRPC interceptor only decodes the token), so it must not
+# receive dead Entra config — the five JWT-validating services set Entra__* themselves.
+env:
+  KeyVault__Uri: "https://kv-antkart-dev.vault.azure.net/"
+
+# Gateway only: mount an ocelot.json routing file from a ConfigMap so downstream
+# routing can change without rebuilding the image. Disabled for the REST services.
+ocelot:
+  enabled: false
+  # config: <structured ocelot document> (see values/gateway.yaml)
+
+# Ingress — disabled by default so the five internal ClusterIP services NEVER render
+# one. Only ak-gateway enables it (see values/gateway.yaml): the gateway is the single
+# public entry point; Products/Cart/Order/Payments/Discount stay internal and are
+# reached through the gateway's Ocelot routes. ak-discount (h2c gRPC) must never be
+# exposed. Host is left empty here and supplied per environment (the gateway's
+# ak-gateway Argo CD Application sets it to the external host, e.g. api.antkart.in).
+ingress:
+  enabled: false
+  className: nginx
+  host: ""                       # e.g. api.antkart.in (or a <public-ip>.nip.io fallback) — set by the gateway Application
+  path: /
+  pathType: Prefix
+  clusterIssuer: letsencrypt-staging   # start on STAGING; switch to letsencrypt-prod once it issues
+  tlsSecretName: ""              # defaults to <name>-tls
+  annotations: {}
+
+# Guard rails — the image already runs as the non-root $APP_UID (UID 1654).
+podSecurityContext: {}
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false

@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "antkart-service.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "antkart-service.labels" . | nindent 4 }}
+  annotations:
+    # cert-manager watches this annotation and provisions a TLS certificate for the
+    # host(s) in the tls block, storing it in tlsSecretName. Points at a ClusterIssuer
+    # (Let's Encrypt staging or prod) — supplied from values.
+    cert-manager.io/cluster-issuer: {{ required "ingress.clusterIssuer is required when ingress.enabled" .Values.ingress.clusterIssuer | quote }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required when ingress.enabled" .Values.ingress.host | quote }}
+      # The Secret cert-manager writes the issued certificate/key into. The ingress
+      # controller then terminates TLS with it.
+      secretName: {{ .Values.ingress.tlsSecretName | default (printf "%s-tls" (include "antkart-service.name" .)) }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # All external traffic for the host goes to the gateway; the gateway's own
+          # Ocelot routes (/gateway/*) fan out to the internal services, and its health
+          # middleware serves /health/*. This is the API-gateway pattern — one public
+          # entry point, everything else ClusterIP-internal.
+          - path: {{ .Values.ingress.path | default "/" }}
+            pathType: {{ .Values.ingress.pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ include "antkart-service.name" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

@@ -1,0 +1,22 @@
+# AK.Order.API — REST order service (PostgreSQL + SAGA). Calls AK.Products.
+name: ak-order
+serviceName: order
+workloadIdentityClientId: "b7f3dea8-2061-4852-8d55-613419cfc35e"
+env:
+  # Overrides the chart default and appsettings.json, both of which point at dev.
+  KeyVault__Uri: "https://kv-antkart-qa.vault.azure.net/"
+  # CRITICAL: override the localhost:5077 default with the in-cluster Products DNS.
+  # Trailing slash retained, matching the appsettings default (http://localhost:5077/).
+  ProductsApi__BaseUrl: "http://ak-products:8080/"
+  ServiceBus__FullyQualifiedNamespace: "sb-antkart-qa.servicebus.windows.net"
+  EventGrid__TopicEndpoint: "https://evgt-antkart-qa.eastus-1.eventgrid.azure.net/api/events"
+  # ConnectionStrings:Postgres is a secret, resolved from Key Vault at runtime.
+  # Microsoft Entra ID JWT validation (AddEntraAuthentication binds the Entra section).
+  Entra__Instance: "https://login.microsoftonline.com"
+  Entra__TenantId: "4cacc56a-0d38-46c4-ba20-429d51d7b449"
+  Entra__Audience: "api://antkart-api-qa"
+  Entra__ClientId: "9e83f736-9f1e-4fe2-aecd-3aaad18cc50b"
+image:
+  # Per-environment override — the chart default points at the dev registry.
+  registry: acrantkartqa.azurecr.io
+  tag: "84b0ff9"

@@ -1,0 +1,13 @@
+{{ include "antkart-service.name" . }} deployed to namespace {{ .Values.namespace }}.
+
+  Image:            {{ include "antkart-service.image" . }}
+  ServiceAccount:   {{ include "antkart-service.name" . }} (workload identity client-id set)
+  Service:          {{ include "antkart-service.name" . }}:{{ .Values.service.port }} (ClusterIP)
+  In-cluster DNS:   http://{{ include "antkart-service.name" . }}.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Verify the workload-identity wiring:
+  kubectl -n {{ .Values.namespace }} get sa {{ include "antkart-service.name" . }} \
+    -o jsonpath='{.metadata.annotations.azure\.workload\.identity/client-id}{"\n"}'
+  kubectl -n {{ .Values.namespace }} get pod -l app.kubernetes.io/name={{ include "antkart-service.name" . }}
+
+No ingress is created — this is a ClusterIP service reachable only inside the cluster.

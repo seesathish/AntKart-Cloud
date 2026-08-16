@@ -1,0 +1,24 @@
+# AK.Products.API — REST catalogue (Cosmos DB via MongoDB API).
+name: ak-products
+serviceName: products
+workloadIdentityClientId: "0120b65d-5520-491f-bca4-05a5b0feb59c"
+replicaCount: 2
+env:
+  # Overrides the chart default and appsettings.json, both of which point at dev.
+  KeyVault__Uri: "https://kv-antkart-qa.vault.azure.net/"
+  # CRITICAL: override the localhost:5001 default with the in-cluster Discount DNS.
+  # No trailing slash, matching the appsettings default form (http://localhost:5001).
+  DiscountGrpc__Address: "http://ak-discount:8080"
+  ServiceBus__FullyQualifiedNamespace: "sb-antkart-qa.servicebus.windows.net"
+  MongoDbSettings__DatabaseName: "antkart-products"
+  MongoDbSettings__ProductsCollection: "products"
+  Seeding__RunOnStartup: "false"
+  # Microsoft Entra ID JWT validation (AddEntraAuthentication binds the Entra section).
+  Entra__Instance: "https://login.microsoftonline.com"
+  Entra__TenantId: "4cacc56a-0d38-46c4-ba20-429d51d7b449"
+  Entra__Audience: "api://antkart-api-qa"
+  Entra__ClientId: "9e83f736-9f1e-4fe2-aecd-3aaad18cc50b"
+image:
+  # Per-environment override — the chart default points at the dev registry.
+  registry: acrantkartqa.azurecr.io
+  tag: 84b0ff9

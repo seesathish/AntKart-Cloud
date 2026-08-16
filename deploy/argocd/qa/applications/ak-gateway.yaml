@@ -1,0 +1,51 @@
+# QA cluster — deploys the QA environment. QA has its own AKS cluster and its own
+# Argo CD instance, so metadata.name is reused with no collision. Copy of
+# applications/ak-gateway.yaml with valueFiles pointed at ../values/qa/.
+#
+# Alternative to the ApplicationSet — one standalone Application per service.
+# Apply EITHER the applications/ directory OR applicationset-antkart.yaml, never
+# both (they create the same Application names). See ../README.md.
+#
+# The gateway is the only service with an ingress. Its ingress overrides are
+# carried below as Helm parameters — the GitOps equivalent of `--set` flags — so
+# that with Argo CD auto-sync + self-heal enabled, the host/issuer are driven
+# from Git (a `helm upgrade` would be reverted by self-heal).
+#   - ingress.host is qa.antkart.in, a subdomain reserved for this environment; the
+#     DNS A record is created in Phase 5.7 once the ingress LoadBalancer IP is known.
+#   - ingress.clusterIssuer is letsencrypt-staging so certificate issuance can be
+#     debugged without consuming the production rate limit (5 duplicate certificates
+#     per hostname per 168 hours). Switch to letsencrypt-prod only once the chain is
+#     proven end to end.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ak-gateway
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: antkart
+  source:
+    repoURL: https://github.com/seesathish/AntKart-Src3.git
+    targetRevision: master
+    path: deploy/helm/antkart-service
+    helm:
+      valueFiles:
+        - ../values/qa/gateway.yaml
+      parameters:
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.host
+          value: "qa.antkart.in"
+        - name: ingress.clusterIssuer
+          value: "letsencrypt-prod"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: antkart
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

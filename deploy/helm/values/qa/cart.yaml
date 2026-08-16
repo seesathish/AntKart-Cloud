@@ -1,0 +1,25 @@
+# AK.ShoppingCart.API — REST cart (Redis).
+name: ak-cart
+serviceName: cart
+# In-cluster identity stays "cart" (ServiceAccount ak-cart, matching the federated
+# identity subject), but the published ACR repository is antkart/shoppingcart, so
+# the image path is overridden here. See antkart-service/values.yaml for the rationale.
+image:
+  name: shoppingcart
+  # Per-environment override — the chart default points at the dev registry.
+  registry: acrantkartqa.azurecr.io
+  tag: "84b0ff9"
+workloadIdentityClientId: "a45e5032-c403-49d0-a939-861837b782f6"
+env:
+  # Overrides the chart default and appsettings.json, both of which point at dev.
+  KeyVault__Uri: "https://kv-antkart-qa.vault.azure.net/"
+  ServiceBus__FullyQualifiedNamespace: "sb-antkart-qa.servicebus.windows.net"
+  RedisSettings__InstanceName: "AKCart:"
+  RedisSettings__CartExpiryDays: "30"
+  # RedisSettings:ConnectionString is a secret (carries the access key) and is
+  # resolved from Key Vault at runtime — it is NOT set here.
+  # Microsoft Entra ID JWT validation (AddEntraAuthentication binds the Entra section).
+  Entra__Instance: "https://login.microsoftonline.com"
+  Entra__TenantId: "4cacc56a-0d38-46c4-ba20-429d51d7b449"
+  Entra__Audience: "api://antkart-api-qa"
+  Entra__ClientId: "9e83f736-9f1e-4fe2-aecd-3aaad18cc50b"

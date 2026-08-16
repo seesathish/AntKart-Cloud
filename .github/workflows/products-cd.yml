@@ -1,0 +1,212 @@
+# =============================================================================
+# Products CD — delivery on merge to master
+# =============================================================================
+# The CD half of the two-workflow, per-service pattern (ADR-023). It runs on a
+# push to master that touches Products (or the shared library) — i.e. after a PR
+# has passed the CI gate and merged. It:
+#   1. builds an IMMUTABLE image tagged with the commit SHA and pushes it to ACR,
+#      authenticating to Azure with OIDC (no stored secret — ADR-022);
+#   2. updates the image tag in Git (deploy/helm/values/products.yaml).
+# It does NOT run helm or kubectl and holds NO cluster credentials. Deployment is
+# GitOps: Argo CD watches deploy/helm/values/products.yaml and reconciles the tag
+# change onto the cluster. The workflow's "deploy" action is the Git commit.
+#
+# Loop prevention: the tag-bump commit only touches deploy/helm/values/**, which
+# is NOT in this workflow's path filter, so it can never retrigger CD (this is the
+# primary guarantee); CI is pull_request-only, so a push never matches it either;
+# and the commit message carries [skip ci]. NOTE: the tag-bump push is made with a
+# PAT (CD_PUSH_TOKEN, see Job 2), and PAT pushes CAN trigger workflows — unlike the
+# built-in GITHUB_TOKEN — so the path filter + trigger types, not the token, are
+# what prevent a loop here.
+# =============================================================================
+
+name: Products CD
+
+# --- Trigger ------------------------------------------------------------------
+# Push to master only (NOT pull_request — that is the CI gate's job), path-filtered
+# to the code that produces the Products image. The values file is deliberately
+# excluded so CD's own tag-bump commit does not retrigger CD.
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'AK.Products/**'
+      - 'AK.BuildingBlocks/**'
+      # Documentation-only changes inside a service folder (e.g. *.md) do NOT
+      # trigger delivery. The negation must be LAST — later patterns win in
+      # GitHub Actions path filters.
+      - '!**/*.md'
+
+# Permissions are scoped PER JOB (least privilege), not at workflow level —
+# surfaced by SonarCloud (a workflow-level write grants it to every job).
+# build-and-push needs id-token: write for the Azure OIDC login; update-gitops
+# pushes with the CD_PUSH_TOKEN PAT (not GITHUB_TOKEN), so contents: read
+# suffices. See each job's permissions below.
+
+# One delivery at a time; do NOT cancel a run in progress (a half-done push is
+# worse than waiting).
+concurrency:
+  group: products-cd
+  cancel-in-progress: false
+
+env:
+  ACR_NAME: acrantkartdev
+  REGISTRY: acrantkartdev.azurecr.io
+  IMAGE_REPO: antkart/products                       # <registry>/antkart/products (chart's image path for Products)
+  DOCKERFILE: AK.Products/AK.Products.API/Dockerfile
+  VALUES_FILE: deploy/helm/values/products.yaml       # Argo CD watches this file; .image.tag is the field CD updates
+
+# NOTE (ADR-022 supply chain): third-party Actions are pinned to an immutable
+# commit SHA, with the release version as a trailing comment (a tag can be
+# repointed, a SHA cannot). Matches products-ci.yml.
+
+jobs:
+  # ===========================================================================
+  # Job 1 — build the immutable image and push it to ACR (OIDC, no secret)
+  # ===========================================================================
+  build-and-push:
+    name: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for azure/login (secret-less Azure auth)
+      contents: read    # checkout only
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Immutable tag = the short commit SHA (first 7 chars). Never reused, so a
+      # given tag always means exactly one build — the opposite of a mutable
+      # "dev"/"latest" tag (KI-004).
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Secret-less auth: exchange the GitHub OIDC token for an Entra token for the
+      # id-ak-cicd-dev identity. The three values are repository VARIABLES (plain
+      # identifiers, not secrets) provisioned by the github-oidc Terraform unit.
+      # The presented OIDC subject is repo:<org>/<repo>:ref:refs/heads/master,
+      # which matches the identity's federated credential.
+      - name: Azure login (OIDC)
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # az acr login uses the OIDC-authenticated az session to get a registry
+      # token and wire it into Docker. The identity holds AcrPush (which includes
+      # pull) on this registry — its only privilege.
+      - name: ACR login
+        run: az acr login --name "$ACR_NAME"
+
+      # Build with the REPOSITORY ROOT as the build context (the trailing "."),
+      # matching how the image is built manually — the Dockerfile COPYs paths like
+      # AK.Products/... and AK.BuildingBlocks/... and nuget.config, all rooted at
+      # the repo root. Tag with the immutable SHA (what gets deployed) and also
+      # 'latest' as a convenience pointer.
+      - name: Build image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build \
+            -f "$DOCKERFILE" \
+            -t "$REGISTRY/$IMAGE_REPO:$TAG" \
+            -t "$REGISTRY/$IMAGE_REPO:latest" \
+            .
+
+      - name: Push image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker push "$REGISTRY/$IMAGE_REPO:$TAG"
+          docker push "$REGISTRY/$IMAGE_REPO:latest"
+
+  # ===========================================================================
+  # Job 2 — update the image tag in Git (this is the deploy; Argo CD reconciles)
+  # ===========================================================================
+  update-gitops:
+    name: update-gitops
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # git push uses the CD_PUSH_TOKEN PAT, not GITHUB_TOKEN
+    steps:
+      # Check out master with the CD_PUSH_TOKEN persisted, so the later push is
+      # authenticated as the repo-admin account that owns the token (NOT the
+      # default GITHUB_TOKEN / github-actions[bot]). This is required because the
+      # github-actions bot is not a listable bypass actor in this repo's ruleset
+      # UI, whereas the admin account IS in the master ruleset's bypass list — so
+      # its token's push satisfies branch protection. See the DevOps CI/CD Guide →
+      # "Branch protection and the CD tag-bump". CD_PUSH_TOKEN is a fine-grained
+      # PAT scoped to Contents: read/write on this repo only.
+      - name: Checkout master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: master
+          token: ${{ secrets.CD_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      # Set .image.tag to the new immutable SHA. yq (mikefarah v4) is preinstalled
+      # on ubuntu-latest. products.yaml has no image.tag today (the chart default
+      # is "dev"), and `yq -i '.image.tag = ...'` CREATES the image mapping/key if
+      # absent — safer than sed, which cannot add a missing key. strenv(TAG) passes
+      # the value via the environment so it can never be interpreted as an
+      # expression.
+      - name: Bump image tag in values
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          yq -i '.image.tag = strenv(TAG)' "$VALUES_FILE"
+          echo "----- updated $VALUES_FILE -----"
+          yq '.image' "$VALUES_FILE"
+
+      # Commit and push the one-line change back to master. The commit author is
+      # github-actions[bot] (cosmetic); the PUSH is authenticated by CD_PUSH_TOKEN
+      # from the checkout above, i.e. as the admin account in the ruleset bypass
+      # list, which is what lets it satisfy branch protection. [skip ci] documents
+      # intent (belt-and-suspenders with the path filter and the no-retrigger rule).
+      #
+      # BRANCH PROTECTION: master requires a PR + status checks. This automated,
+      # deterministic tag-bump pushes directly to master; it succeeds because
+      # CD_PUSH_TOKEN belongs to an account on the master ruleset's bypass list
+      # (see the DevOps CI/CD Guide → "Branch protection and the CD tag-bump").
+      - name: Commit and push tag bump
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$VALUES_FILE"
+          if git diff --cached --quiet; then
+            echo "image tag already $TAG — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(cd): products image -> $TAG [skip ci]"
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:master; then
+              pushed=true
+              break
+            fi
+            echo "push rejected (attempt $attempt) - rebasing onto latest master"
+            git pull --rebase origin master
+          done
+
+          if [ "$pushed" != "true" ]; then
+            echo "::error::failed to push tag bump after 5 attempts" >&2
+            exit 1
+          fi
+
+      - name: Verify tag bump landed on master
+        env:
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          git fetch origin master
+          remote_tag=$(git show "FETCH_HEAD:$VALUES_FILE" | yq '.image.tag')
+          echo "master $VALUES_FILE image.tag = $remote_tag (expected $TAG)"
+          if [ "$remote_tag" != "$TAG" ]; then
+            echo "::error::tag bump did not land on master ($remote_tag != $TAG)" >&2
+            exit 1
+          fi

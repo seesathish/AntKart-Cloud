@@ -1,0 +1,47 @@
+# =============================================================================
+# AppProject: antkart
+# =============================================================================
+# A dedicated Argo CD project scoping WHAT the AntKart Applications may do, in
+# place of the built-in `default` project (which allows any repo -> any cluster
+# -> any resource). This is least-privilege: an Application in this project can
+# ONLY pull from the AntKart repo, ONLY deploy into the `antkart` namespace of
+# the in-cluster API server, and ONLY create namespaced resources.
+#
+# Trade-off vs `project: default`:
+#   * default        — zero setup, no guard rails; fine for a first experiment.
+#   * antkart (this) — one extra manifest to apply FIRST, but a misconfigured or
+#                      compromised Application cannot be repointed at an arbitrary
+#                      repo, deploy into kube-system, or create cluster-scoped
+#                      objects (RBAC, CRDs). Worth it the moment this is more than
+#                      a throwaway.
+# If you prefer the simplest possible start, set `project: default` in the
+# ApplicationSet / Applications and skip this file.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: antkart
+  namespace: argocd
+  # Keep the project even if this manifest is ever pruned from a parent app.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: AntKart platform services (single generic Helm chart per service).
+
+  # Only this Git repo may be a source. Blocks an Application in this project from
+  # syncing arbitrary Helm charts or manifests from anywhere else.
+  sourceRepos:
+    - https://github.com/seesathish/AntKart-Src3.git
+
+  # Only the in-cluster antkart namespace is a permitted deploy target.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: antkart
+
+  # The chart creates ONLY namespaced resources (ServiceAccount, Deployment,
+  # Service, ConfigMap, Ingress). Allow all namespaced kinds; deny every
+  # cluster-scoped kind (empty whitelist = none) so an Application here can never
+  # create RBAC, CRDs, Namespaces, ClusterIssuers, etc.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

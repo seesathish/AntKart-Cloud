@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "antkart-service.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "antkart-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "antkart-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "antkart-service.selectorLabels" . | nindent 8 }}
+        # REQUIRED by the workload-identity webhook — it only injects the token +
+        # AZURE_* env vars into pods carrying this label. Must be on the POD template.
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ include "antkart-service.name" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Values.serviceName }}
+          image: {{ include "antkart-service.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: {{ .Values.service.portName }}
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          {{- if .Values.env }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "antkart-service.name" . }}-env
+          {{- end }}
+          {{- if eq .Values.probes.type "tcp" }}
+          # AK.Discount serves HTTP/2 (h2c) only, so an HTTP/1.1 httpGet probe is
+          # rejected; a TCP probe is protocol-agnostic. See the README for the
+          # gRPC health-probe note when ingress/mesh is introduced.
+          startupProbe:
+            tcpSocket:
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- else }}
+          # startupProbe gates liveness/readiness so Key Vault load at boot never
+          # trips a restart. Liveness = shallow /health/live; readiness = tolerant
+          # /health/ready.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.containerPort }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.ocelot.enabled }}
+          volumeMounts:
+            - name: ocelot-config
+              mountPath: /app/ocelot.json
+              subPath: ocelot.json
+              readOnly: true
+          {{- end }}
+      {{- if .Values.ocelot.enabled }}
+      volumes:
+        - name: ocelot-config
+          configMap:
+            name: {{ include "antkart-service.name" . }}-ocelot
+      {{- end }}

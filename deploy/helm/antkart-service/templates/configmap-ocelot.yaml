@@ -1,0 +1,15 @@
+{{- if .Values.ocelot.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "antkart-service.name" . }}-ocelot
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "antkart-service.labels" . | nindent 4 }}
+data:
+  # Rendered from the structured ocelot document in values (values/gateway.yaml).
+  # Mounted over /app/ocelot.json in the gateway pod, so downstream routing changes
+  # need only a values edit + helm upgrade — no image rebuild.
+  ocelot.json: |-
+    {{- .Values.ocelot.config | toPrettyJson | nindent 4 }}
+{{- end }}

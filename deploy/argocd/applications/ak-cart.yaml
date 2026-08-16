@@ -1,0 +1,29 @@
+# Alternative to the ApplicationSet — one standalone Application per service.
+# Apply EITHER the applications/ directory OR applicationset-antkart.yaml, never
+# both (they create the same Application names). See ../README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ak-cart
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: antkart
+  source:
+    repoURL: https://github.com/seesathish/AntKart-Src3.git
+    targetRevision: master
+    path: deploy/helm/antkart-service
+    helm:
+      valueFiles:
+        - ../values/cart.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: antkart
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

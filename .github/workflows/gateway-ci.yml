@@ -1,0 +1,156 @@
+# =============================================================================
+# Gateway CI — pull-request quality gate
+# =============================================================================
+# CI half of the per-service pattern (ADR-023) — a copy of products-ci.yml with
+# the Gateway specifics changed. PURE QUALITY GATE: build, SonarCloud, Trivy.
+# No image, no cluster. See the DevOps CI/CD Guide.
+#
+# GATEWAY SPECIFICS:
+#  * NO unit test project. AK.Gateway is a thin Ocelot API-gateway host — its
+#    behaviour is its routing configuration (ocelot.json), not testable C# logic
+#    in isolation; it is exercised at the platform/integration level, not by a
+#    unit suite. So the build-test job BUILDS only (no test step), and the sonar
+#    job runs WITHOUT a coverage report (there are no tests to produce one).
+#  * AK.IntegrationTests is NOT in the path filter: that project does not
+#    reference AK.Gateway, so those tests do not exercise gateway logic.
+#  * The job NAMES stay build-test / sonar / trivy so the SAME four required
+#    status checks (build-test, sonar, trivy, SonarCloud Code Analysis) are
+#    satisfied uniformly across every service's PR — a differently-named job
+#    would leave a required check permanently "Expected" and block the merge.
+# =============================================================================
+
+name: Gateway CI
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'AK.Gateway/**'
+      - 'AK.BuildingBlocks/**'
+      - 'nuget.config'
+      - '.github/workflows/gateway-ci.yml'
+      # Documentation-only changes inside a service folder (e.g. *.md) do NOT
+      # trigger the CI gate. The negation must be LAST — later patterns win in
+      # GitHub Actions path filters.
+      - '!**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '9.0.x'
+
+  GATEWAY_API: 'AK.Gateway/AK.Gateway.API/AK.Gateway.API.csproj'
+
+  SONAR_ORG: 'seesathish'
+  SONAR_PROJECT_KEY: 'seesathish_AntKart-Src3'
+
+  TRIVY_SEVERITY: 'HIGH,CRITICAL'
+
+jobs:
+  # Named build-test for required-check parity, but there is no test project to
+  # run — this compiles the deployable only. A compile error fails the gate.
+  build-test:
+    name: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore "${{ env.GATEWAY_API }}"
+
+      - name: Build (Release)
+        run: dotnet build "${{ env.GATEWAY_API }}" -c Release --no-restore
+
+      # No unit-test step: AK.Gateway has no test project (see header).
+
+  sonar:
+    name: sonar
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Set up Java (for the Sonar scanner)
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Install dotnet-sonarscanner
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      # No coverage report is wired in (there are no tests to produce one).
+      # SonarCloud still analyses the gateway code for bugs, code smells, and
+      # security hotspots — coverage simply shows as 0% for gateway's new code.
+      - name: SonarCloud analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet sonarscanner begin \
+            /k:"${{ env.SONAR_PROJECT_KEY }}" \
+            /o:"${{ env.SONAR_ORG }}" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
+            /d:sonar.coverage.exclusions="**/Program.cs,**/Logging/SerilogExtensions.cs,**/Observability/OpenTelemetryExtensions.cs,**/Persistence/MongoDbContext.cs"
+
+          dotnet build "${{ env.GATEWAY_API }}" -c Release
+
+          # AK.BuildingBlocks.Tests coverage — the per-service jobs otherwise never run it,
+          # so shared-library code (e.g. middleware) would show 0% on new code in Sonar.
+          dotnet build "AK.BuildingBlocks/AK.BuildingBlocks.Tests/AK.BuildingBlocks.Tests.csproj" -c Release
+          dotnet test "AK.BuildingBlocks/AK.BuildingBlocks.Tests/AK.BuildingBlocks.Tests.csproj" -c Release --no-build --collect:"XPlat Code Coverage;Format=opencover" --results-directory ./coverage
+
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Trivy filesystem/dependency scan (AK.Gateway)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'AK.Gateway'
+          scanners: 'vuln,secret,misconfig'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Trivy Dockerfile scan (Gateway)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: 'AK.Gateway/AK.Gateway.API/Dockerfile'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '1'

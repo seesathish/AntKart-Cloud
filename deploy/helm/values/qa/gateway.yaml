@@ -1,0 +1,144 @@
+# AK.Gateway.API — Ocelot API gateway. Routes to the ak-* REST services.
+name: ak-gateway
+serviceName: gateway
+workloadIdentityClientId: "fbb6f246-7fa3-4dcf-9ea0-ba91fd8c0fea"
+env:
+  # Overrides the chart default and appsettings.json, both of which point at dev.
+  KeyVault__Uri: "https://kv-antkart-qa.vault.azure.net/"
+  # Microsoft Entra ID JWT validation at the edge (AddEntraAuthentication binds the Entra section).
+  Entra__Instance: "https://login.microsoftonline.com"
+  Entra__TenantId: "4cacc56a-0d38-46c4-ba20-429d51d7b449"
+  Entra__Audience: "api://antkart-api-qa"
+  Entra__ClientId: "9e83f736-9f1e-4fe2-aecd-3aaad18cc50b"
+# Ingress — the gateway is the ONLY service exposed externally. Enabled here is
+# kept false so a plain `helm install` does not create it before the controller
+# exists; the ak-gateway Argo CD Application sets enabled=true and the external
+# host (ingress.host=api.antkart.in) and Argo CD reconciles it.
+ingress:
+  enabled: false
+  className: nginx
+  path: /
+  pathType: Prefix
+  # Staging validated the whole flow first (Let's Encrypt PRODUCTION has strict
+  # rate limits — a failed loop can lock the account out for a week); now switched
+  # to production for the real domain (api.antkart.in). This values file is the
+  # SOURCE OF TRUTH for the issuer; the ak-gateway Argo CD Application also sets
+  # ingress.clusterIssuer=letsencrypt-prod, which now agrees with this and is
+  # therefore redundant but harmless.
+  clusterIssuer: letsencrypt-prod
+  annotations:
+    # Max request body the gateway will accept (nginx default is 1m). 10m leaves room
+    # for larger POST/PUT payloads without a 413.
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Upstream read/send timeouts in seconds — how long nginx waits on the gateway.
+    # 60s matches Ocelot's own per-route QoS TimeoutValue (10s) with headroom.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # Force HTTP -> HTTPS. nginx does this by default once a TLS block is present;
+    # set explicitly so the intent is obvious and survives controller defaults changing.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+# ocelot.json is mounted from a ConfigMap over /app/ocelot.json so downstream
+# routing changes need only a values edit + `helm upgrade` (no image rebuild).
+# Downstream hosts are the in-cluster ak-* Service names on port 8080.
+ocelot:
+  enabled: true
+  config:
+    Routes:
+      - UpstreamPathTemplate: "/gateway/products/{everything}"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/v1/products/{everything}"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-products", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 20}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 5, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/products"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/v1/products"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-products", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 20}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 5, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/cart/{everything}"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/v1/cart/{everything}"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-cart", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 10}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 3, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/cart"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/v1/cart"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-cart", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 10}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 3, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/orders/{everything}"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/orders/{everything}"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-order", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 10}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 3, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/orders"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/orders"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-order", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 10}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 3, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/payments/{everything}"
+        UpstreamHttpMethod: ["GET", "POST", "PUT", "DELETE"]
+        DownstreamPathTemplate: "/api/payments/{everything}"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-payments", Port: 8080}
+        AuthenticationOptions: {AuthenticationProviderKey: "Bearer"}
+        RateLimitOptions: {EnableRateLimiting: true, Period: "1s", PeriodTimespan: 1, Limit: 30}
+        QoSOptions: {ExceptionsAllowedBeforeBreaking: 5, DurationOfBreak: 30000, TimeoutValue: 10000}
+      - UpstreamPathTemplate: "/gateway/health/products"
+        UpstreamHttpMethod: ["GET"]
+        DownstreamPathTemplate: "/health"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-products", Port: 8080}
+      - UpstreamPathTemplate: "/gateway/health/cart"
+        UpstreamHttpMethod: ["GET"]
+        DownstreamPathTemplate: "/health"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-cart", Port: 8080}
+      - UpstreamPathTemplate: "/gateway/health/orders"
+        UpstreamHttpMethod: ["GET"]
+        DownstreamPathTemplate: "/health"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-order", Port: 8080}
+      - UpstreamPathTemplate: "/gateway/health/payments"
+        UpstreamHttpMethod: ["GET"]
+        DownstreamPathTemplate: "/health"
+        DownstreamScheme: "http"
+        DownstreamHostAndPorts:
+          - {Host: "ak-payments", Port: 8080}
+    GlobalConfiguration:
+      # Interim internal base URL; replaced with the external URL when ingress is added.
+      BaseUrl: "http://ak-gateway:8080"
+      RateLimitOptions:
+        DisableRateLimitHeaders: false
+        QuotaExceededMessage: "Rate limit exceeded. Please slow down."
+        HttpStatusCode: 429
+image:
+  # Per-environment override — the chart default points at the dev registry.
+  registry: acrantkartqa.azurecr.io
+  tag: "84b0ff9"

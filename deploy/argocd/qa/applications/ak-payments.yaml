@@ -1,0 +1,33 @@
+# QA cluster — deploys the QA environment. QA has its own AKS cluster and its own
+# Argo CD instance, so metadata.name is reused with no collision. Copy of
+# applications/ak-payments.yaml with valueFiles pointed at ../values/qa/.
+#
+# Alternative to the ApplicationSet — one standalone Application per service.
+# Apply EITHER the applications/ directory OR applicationset-antkart.yaml, never
+# both (they create the same Application names). See ../README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ak-payments
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: antkart
+  source:
+    repoURL: https://github.com/seesathish/AntKart-Src3.git
+    targetRevision: master
+    path: deploy/helm/antkart-service
+    helm:
+      valueFiles:
+        - ../values/qa/payments.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: antkart
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

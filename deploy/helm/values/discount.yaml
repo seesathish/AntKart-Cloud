@@ -1,0 +1,22 @@
+# AK.Discount.Grpc — gRPC discount service (PostgreSQL). Serves HTTP/2 (h2c) only.
+name: ak-discount
+serviceName: discount
+workloadIdentityClientId: "9c3ddaad-0cd2-4b98-9bbc-d9cd9ddaa4e2"
+# The service exposes ONLY HTTP/2 (h2c) endpoints, so HTTP/1.1 httpGet probes are
+# rejected — use TCP probes (protocol-agnostic). See the README for the gRPC
+# health-probe / ingress note.
+probes:
+  type: tcp
+service:
+  portName: grpc
+  # Declares the port speaks gRPC (HTTP/2). Metadata only for a ClusterIP; the
+  # in-cluster caller (AK.Products) reaches it as http://ak-discount:8080 over h2c.
+  appProtocol: grpc
+image:
+  tag: "84b0ff9"
+# Inherits only the common env default (KeyVault__Uri) — the DiscountDb connection
+# string is a secret resolved from Key Vault at runtime. No Entra__* is injected:
+# AK.Discount does NOT bind the Entra section; its gRPC AuthInterceptor merely
+# decodes the bearer token and checks the flat "roles" claim for "admin"
+# (JwtSecurityTokenHandler.ReadJwtToken — no issuer/audience/signature validation,
+# no configuration read). Injecting Entra__* here would be dead config.

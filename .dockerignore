@@ -1,0 +1,57 @@
+# .dockerignore — repository-root ignore list for all service image builds.
+#
+# WHY this file exists:
+#   1. Build speed & smaller context — every `docker build` (context = repo root) streams the
+#      working tree to the Docker daemon. Excluding build output, IDE state, and node_modules
+#      keeps that context small so builds start fast and layer caching stays effective. The
+#      Dockerfiles restore and compile inside the SDK image, so host-side bin/ and obj/ are noise.
+#   2. Keeping local config & secrets OUT of images — appsettings.Development.json, *.user files,
+#      terraform state under infrastructure/, and any local secret files must never be baked into
+#      a container layer (image layers are inspectable and shipped to a registry). Runtime config
+#      comes from environment variables and Azure Key Vault, never from files copied at build time.
+
+# --- Build output (regenerated inside the build image) ---
+**/bin/
+**/obj/
+bin/
+obj/
+
+# --- Version control & CI metadata ---
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# --- IDE / editor state ---
+.vs/
+.vscode/
+**/*.user
+*.suo
+
+# --- Node / tooling ---
+**/node_modules
+
+# --- Local application config & secrets (must come from env / Key Vault at runtime) ---
+**/appsettings.Development.json
+**/appsettings.*.Local.json
+**/*.env
+.env
+*.pfx
+*.key
+*.pem
+secrets.json
+**/secrets.json
+
+# --- Test output ---
+**/TestResults
+
+# --- Infrastructure-as-code (terraform state, plans — never needed in an app image) ---
+infrastructure/
+
+# --- Documentation (not needed at runtime) ---
+docs/
+*.md
+
+# --- Postman collections ---
+*.postman_collection.json
+*.postman_environment.json

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: antkart-service
+description: >-
+  Generic chart for a single AntKart deployable service. Instantiated once per
+  service with a per-service values file (deploy/helm/values/<service>.yaml).
+  Templates a workload-identity ServiceAccount, a Deployment (with the
+  azure.workload.identity/use label required by the webhook), a ClusterIP
+  Service on 8080, and a ConfigMap of non-secret configuration.
+type: application
+version: 0.1.0
+# appVersion tracks the platform image tag convention; the actual tag is set per
+# service via values (image.tag).
+appVersion: "dev"

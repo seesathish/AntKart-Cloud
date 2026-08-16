@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "antkart-service.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "antkart-service.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "antkart-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: {{ .Values.service.portName }}
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.containerPort }}
+      protocol: TCP
+      {{- if .Values.service.appProtocol }}
+      # appProtocol is metadata only for a ClusterIP (L4) Service; it declares the
+      # port speaks HTTP/2 (h2c) for the future ingress/mesh — see the README.
+      appProtocol: {{ .Values.service.appProtocol }}
+      {{- end }}

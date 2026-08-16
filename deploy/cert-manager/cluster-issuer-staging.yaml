@@ -1,0 +1,26 @@
+# Let's Encrypt STAGING ClusterIssuer.
+#
+# USE THIS FIRST. Staging has generous rate limits, so it is safe to iterate while
+# validating the end-to-end flow (ingress -> HTTP-01 challenge -> certificate). Staging
+# certificates are signed by an UNTRUSTED root, so browsers/curl will warn — that is
+# expected; use `curl -k` to verify. Only switch the Ingress to letsencrypt-prod once
+# staging issues a Ready certificate.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    # Let's Encrypt sends expiry notices here. Set to your own address before applying.
+    email: your-email@example.com
+    # Where the ACME account private key is stored (created on first use).
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      # HTTP-01: cert-manager proves domain control by serving a token over HTTP on
+      # the ingress. Works with the public hostname pointed at the controller IP
+      # (the custom domain api.antkart.in, or a <public-ip>.nip.io fallback).
+      - http01:
+          ingress:
+            class: nginx

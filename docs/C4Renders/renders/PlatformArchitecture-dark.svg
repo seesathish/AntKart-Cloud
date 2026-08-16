@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1010 740" width="1010" height="740" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">AntKart platform architecture: Clean Architecture rings</title>
+<desc id="d">Four concentric rings. Domain at the core holds the Order, Cart, Payment and Coupon entities, value objects, status enums, domain events and specifications, with no framework dependencies. Application surrounds it with command and query handlers, saga state machines, message consumers, validators and the repository interfaces the core owns. Infrastructure holds EF Core persistence, Cosmos DB, Redis and Service Bus adapters, external clients, resilience policies and health checks. API is outermost with minimal API endpoints, Ocelot gateway routing, the gRPC discount contract and Azure Functions triggers. Dependencies point inward only.</desc>
+<rect width="1010" height="740" fill="#15151C"/>
+<text x="40" y="48" font-size="27" font-weight="600" fill="#F1EFE8">AntKart under Clean Architecture</text>
+<text x="40" y="75" font-size="15" fill="#B4B2A9">The core knows nothing about the database, the message broker, or HTTP. Every service is built this way.</text>
+<circle cx="300" cy="392" r="252" fill="#7F77DD"/>
+<circle cx="300" cy="392" r="194" fill="#185FA5"/>
+<circle cx="300" cy="392" r="136" fill="#1D9E75"/>
+<circle cx="300" cy="392" r="78" fill="#BA7517"/>
+<text x="300" y="168" font-size="17" font-weight="600" fill="#ffffff" text-anchor="middle" letter-spacing="1.6">API</text>
+<text x="300" y="226" font-size="17" font-weight="600" fill="#ffffff" text-anchor="middle" letter-spacing="1.6">INFRASTRUCTURE</text>
+<text x="300" y="284" font-size="17" font-weight="600" fill="#ffffff" text-anchor="middle" letter-spacing="1.6">APPLICATION</text>
+<text x="300" y="386" font-size="17" font-weight="600" fill="#ffffff" text-anchor="middle" letter-spacing="1.6">DOMAIN</text>
+<text x="300" y="412" font-size="13" fill="#ffffff" text-anchor="middle" opacity="0.85">the core</text>
+<defs><marker id="inward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9 z" fill="#D3D1C7"/></marker></defs>
+<line x1="300" y1="678" x2="300" y2="490" stroke="#D3D1C7" stroke-width="2.5" marker-end="url(#inward)"/>
+<text x="300" y="696" font-size="14" font-weight="600" fill="#D3D1C7" text-anchor="middle">dependencies point inward only</text>
+<rect x="602" y="100" width="376" height="144" rx="9" fill="none" stroke="#7F77DD" stroke-width="2.5"/>
+<text x="624" y="128" font-size="15" font-weight="600" fill="#7F77DD">Api</text>
+<text x="624" y="154" font-size="13.5" fill="#E8E6DE">Minimal API endpoints per feature</text>
+<text x="624" y="175" font-size="13.5" fill="#E8E6DE">Ocelot gateway routing</text>
+<text x="624" y="196" font-size="13.5" fill="#E8E6DE">gRPC service contract for discounts</text>
+<text x="624" y="217" font-size="13.5" fill="#E8E6DE">Azure Functions event triggers</text>
+<text x="624" y="238" font-size="13.5" fill="#E8E6DE">Composition root: DI and configuration</text>
+<rect x="602" y="254" width="376" height="144" rx="9" fill="none" stroke="#185FA5" stroke-width="2.5"/>
+<text x="624" y="282" font-size="15" font-weight="600" fill="#185FA5">Infrastructure</text>
+<text x="624" y="308" font-size="13.5" fill="#E8E6DE">EF Core persistence and migrations</text>
+<text x="624" y="329" font-size="13.5" fill="#E8E6DE">Cosmos DB, Redis and Service Bus adapters</text>
+<text x="624" y="350" font-size="13.5" fill="#E8E6DE">External clients: Razorpay, gRPC</text>
+<text x="624" y="371" font-size="13.5" fill="#E8E6DE">Resilience policies and health checks</text>
+<text x="624" y="392" font-size="13.5" fill="#E8E6DE">Catalog seeding</text>
+<rect x="602" y="408" width="376" height="144" rx="9" fill="none" stroke="#1D9E75" stroke-width="2.5"/>
+<text x="624" y="436" font-size="15" font-weight="600" fill="#1D9E75">Application</text>
+<text x="624" y="462" font-size="13.5" fill="#E8E6DE">Command and query handlers</text>
+<text x="624" y="483" font-size="13.5" fill="#E8E6DE">Saga state machines</text>
+<text x="624" y="504" font-size="13.5" fill="#E8E6DE">Message consumers</text>
+<text x="624" y="525" font-size="13.5" fill="#E8E6DE">Validators, DTOs and mapping</text>
+<text x="624" y="546" font-size="13.5" fill="#E8E6DE">Repository interfaces the core owns</text>
+<rect x="602" y="562" width="376" height="144" rx="9" fill="none" stroke="#BA7517" stroke-width="2.5"/>
+<text x="624" y="590" font-size="15" font-weight="600" fill="#BA7517">Domain</text>
+<text x="624" y="616" font-size="13.5" fill="#E8E6DE">Order, Cart, Payment, Coupon entities</text>
+<text x="624" y="637" font-size="13.5" fill="#E8E6DE">Value objects and status enums</text>
+<text x="624" y="658" font-size="13.5" fill="#E8E6DE">Domain events</text>
+<text x="624" y="679" font-size="13.5" fill="#E8E6DE">Specifications</text>
+<text x="624" y="700" font-size="13.5" fill="#E8E6DE">No framework dependencies at all</text>
+</svg>

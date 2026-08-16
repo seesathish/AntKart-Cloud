@@ -1,0 +1,45 @@
+# Alternative to the ApplicationSet — one standalone Application per service.
+# Apply EITHER the applications/ directory OR applicationset-antkart.yaml, never
+# both (they create the same Application names). See ../README.md.
+#
+# The gateway is the only service with an ingress. Its ingress overrides are
+# carried below as Helm parameters — the GitOps equivalent of `--set` flags — so
+# that with Argo CD auto-sync + self-heal enabled, the host/issuer are driven
+# from Git (a `helm upgrade` would be reverted by self-heal). `ingress.host` is
+# the external host — the real domain api.antkart.in (GoDaddy A record ->
+# ingress LoadBalancer IP 20.246.197.150). `ingress.clusterIssuer` is set to
+# letsencrypt-prod here so cert-manager issues a trusted PRODUCTION certificate
+# (overriding the letsencrypt-staging default in values/gateway.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ak-gateway
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: antkart
+  source:
+    repoURL: https://github.com/seesathish/AntKart-Src3.git
+    targetRevision: master
+    path: deploy/helm/antkart-service
+    helm:
+      valueFiles:
+        - ../values/gateway.yaml
+      parameters:
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.host
+          value: "api.antkart.in"
+        - name: ingress.clusterIssuer
+          value: "letsencrypt-prod"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: antkart
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

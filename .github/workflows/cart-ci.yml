@@ -1,0 +1,197 @@
+# =============================================================================
+# ShoppingCart CI — pull-request quality gate
+# =============================================================================
+# CI half of the two-workflow, per-service pattern (ADR-023) — a copy of
+# products-ci.yml with only the ShoppingCart specifics changed. PURE QUALITY
+# GATE: build, test with coverage, SonarCloud, Trivy. Builds/pushes NO image and
+# touches NO cluster (that is cart-cd.yml's job). See the DevOps CI/CD Guide.
+# =============================================================================
+
+name: ShoppingCart CI
+
+# --- Triggers -----------------------------------------------------------------
+# Path-filtered to what affects ShoppingCart. AK.IntegrationTests is included
+# because the in-memory integration tests reference AK.ShoppingCart.Application
+# (they exercise cart-related flows).
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'AK.ShoppingCart/**'
+      - 'AK.BuildingBlocks/**'
+      - 'AK.IntegrationTests/**'
+      - 'nuget.config'
+      - '.github/workflows/cart-ci.yml'
+      # Documentation-only changes inside a service folder (e.g. *.md) do NOT
+      # trigger the CI gate. The negation must be LAST — later patterns win in
+      # GitHub Actions path filters.
+      - '!**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cart-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# --- Shared configuration -----------------------------------------------------
+env:
+  # .NET SDK — pinned to the repository's target framework (net9.0; no global.json).
+  DOTNET_VERSION: '9.0.x'
+
+  CART_API: 'AK.ShoppingCart/AK.ShoppingCart.API/AK.ShoppingCart.API.csproj'
+  CART_TESTS: 'AK.ShoppingCart/AK.ShoppingCart.Tests/AK.ShoppingCart.Tests.csproj'
+  INTEGRATION_TESTS: 'AK.IntegrationTests/AK.IntegrationTests.csproj'
+
+  # SonarCloud — the SAME repository-level project as every service (org convention
+  # <org>_<repo>); each service's CI analyses the projects it builds into it.
+  SONAR_ORG: 'seesathish'
+  SONAR_PROJECT_KEY: 'seesathish_AntKart-Src3'
+
+  TRIVY_SEVERITY: 'HIGH,CRITICAL'
+
+# NOTE (ADR-022 supply chain): third-party Actions are pinned to an immutable
+# commit SHA, with the release version as a trailing comment. Identical refs to
+# products-ci.yml.
+
+jobs:
+  # ===========================================================================
+  # Stage 1 — build & test
+  # ===========================================================================
+  build-test:
+    name: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: |
+          dotnet restore "${{ env.CART_API }}"
+          dotnet restore "${{ env.CART_TESTS }}"
+          dotnet restore "${{ env.INTEGRATION_TESTS }}"
+
+      - name: Build (Release)
+        run: dotnet build "${{ env.CART_API }}" -c Release --no-restore
+
+      - name: Unit tests (AK.ShoppingCart.Tests)
+        run: >
+          dotnet test "${{ env.CART_TESTS }}" -c Release
+          --collect:"XPlat Code Coverage;Format=opencover"
+          --results-directory ./coverage
+          --logger "trx;LogFileName=cart-unit.trx"
+
+      - name: Integration tests (AK.IntegrationTests)
+        run: >
+          dotnet test "${{ env.INTEGRATION_TESTS }}" -c Release
+          --collect:"XPlat Code Coverage;Format=opencover"
+          --results-directory ./coverage
+          --logger "trx;LogFileName=integration.trx"
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cart-test-results
+          path: |
+            ./coverage/**/*.xml
+            ./coverage/**/*.trx
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # Stage 2 — SonarCloud static analysis + coverage
+  # ===========================================================================
+  sonar:
+    name: sonar
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Set up Java (for the Sonar scanner)
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Install dotnet-sonarscanner
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: SonarCloud analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet sonarscanner begin \
+            /k:"${{ env.SONAR_PROJECT_KEY }}" \
+            /o:"${{ env.SONAR_ORG }}" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
+            /d:sonar.coverage.exclusions="**/Program.cs,**/Logging/SerilogExtensions.cs,**/Observability/OpenTelemetryExtensions.cs,**/Persistence/MongoDbContext.cs"
+
+          dotnet build "${{ env.CART_API }}" -c Release
+          dotnet build "${{ env.CART_TESTS }}" -c Release
+          dotnet build "${{ env.INTEGRATION_TESTS }}" -c Release
+
+          dotnet test "${{ env.CART_TESTS }}" -c Release --no-build \
+            --collect:"XPlat Code Coverage;Format=opencover" \
+            --results-directory ./coverage
+          dotnet test "${{ env.INTEGRATION_TESTS }}" -c Release --no-build \
+            --collect:"XPlat Code Coverage;Format=opencover" \
+            --results-directory ./coverage
+
+          # AK.BuildingBlocks.Tests coverage — the per-service jobs otherwise never run it,
+          # so shared-library code (e.g. middleware) would show 0% on new code in Sonar.
+          dotnet build "AK.BuildingBlocks/AK.BuildingBlocks.Tests/AK.BuildingBlocks.Tests.csproj" -c Release
+          dotnet test "AK.BuildingBlocks/AK.BuildingBlocks.Tests/AK.BuildingBlocks.Tests.csproj" -c Release --no-build --collect:"XPlat Code Coverage;Format=opencover" --results-directory ./coverage
+
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  # ===========================================================================
+  # Stage 3 — Trivy security scan
+  # ===========================================================================
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Trivy filesystem/dependency scan (AK.ShoppingCart)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'AK.ShoppingCart'
+          scanners: 'vuln,secret,misconfig'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Trivy Dockerfile scan (ShoppingCart)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: 'AK.ShoppingCart/AK.ShoppingCart.API/Dockerfile'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '1'

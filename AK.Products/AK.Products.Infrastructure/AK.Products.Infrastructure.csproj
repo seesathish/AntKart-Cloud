@@ -1,0 +1,50 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AK.Products.Domain\AK.Products.Domain.csproj" />
+    <ProjectReference Include="..\AK.Products.Application\AK.Products.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The seed loader reuses the persistence layer (MongoDbContext + ProductClassMap) rather
+         than duplicating Mongo client/mapping code. -->
+    <InternalsVisibleTo Include="AK.Tools.ProductsSeedLoader" />
+    <!-- The discount seed loader reads product ids from Cosmos via the same persistence layer. -->
+    <InternalsVisibleTo Include="AK.Tools.DiscountSeedLoader" />
+    <!-- Tests exercise the internal DiscountGrpcClient's graceful-degradation behaviour. -->
+    <InternalsVisibleTo Include="AK.Products.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.29.3" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
+    <PackageReference Include="MassTransit" Version="8.3.6" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" Version="9.0.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.3.0" />
+    <!-- Emits an ActivitySource ("MongoDB.Driver.Core.Extensions.DiagnosticSources") so Cosmos
+         (Mongo API) command spans appear in traces. 3.x targets MongoDB.Driver 3.x; no
+         Microsoft.Extensions dependency, so it does not affect the pinned OTel/Extensions line. -->
+    <PackageReference Include="MongoDB.Driver.Core.Extensions.DiagnosticSources" Version="3.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Grpc\discount.proto" GrpcServices="Client" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

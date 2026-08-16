@@ -1,0 +1,3 @@
+# The seed CSV is generated with LF newlines. Pin LF so regenerating the file
+# never produces a line-ending-only diff (keeps regeneration deterministic).
+products.csv text eol=lf
