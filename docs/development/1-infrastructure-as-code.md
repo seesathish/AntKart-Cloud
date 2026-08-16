@@ -2,7 +2,7 @@
 
 > **Diagrams pending review:** _Terragrunt unit dependencies_ and _Environment promotion_ are carried across as-is and will be reworked.
 
-Every Azure resource is provisioned as code. **Terraform modules** describe *how* a resource is built; **Terragrunt live units** wire the modules together for an environment and supply their inputs. A shared `root.hcl` generates the `backend`, `provider`, and `versions` configuration into each unit, so that configuration lives in exactly one place. Remote state is isolated **per unit** in Azure Storage, with blob-lease locking serialising applies. The `dev` environment is delivered; `qa` is planned.
+Every Azure resource is provisioned as code. **Terraform modules** describe *how* a resource is built; **Terragrunt live units** wire the modules together for an environment and supply their inputs. A shared `root.hcl` generates the `backend`, `provider`, and `versions` configuration into each unit, so that configuration lives in exactly one place. Remote state is isolated **per unit** in Azure Storage, with blob-lease locking serialising applies. Both the `dev` and `qa` environments are delivered, built from the same modules with different inputs.
 
 ## Terragrunt unit dependencies
 
@@ -75,23 +75,22 @@ flowchart TB
 
     subgraph DEV["environments/dev — delivered"]
         DUNITS["18 Terragrunt units (dev inputs)"]:::cicd
-        DSTATE[("state key = path_relative_to_include<br/>e.g. aks/terraform.tfstate")]:::datastore
+        DSTATE[("container: tfstate<br/>key = aks/terraform.tfstate")]:::datastore
     end
 
-    subgraph QA["environments/qa — PLANNED"]
+    subgraph QA["environments/qa — delivered"]
         QUNITS["same modules, qa inputs"]:::cicd
-        QSTATE[("state key = path_relative_to_include<br/>e.g. aks/terraform.tfstate")]:::datastore
+        QSTATE[("container: tfstate-qa<br/>key = aks/terraform.tfstate")]:::datastore
     end
 
-    RISK["State-key collision risk:<br/>the key derives from the unit path only, NOT the environment.<br/>QA must use a distinct backend container or key prefix,<br/>or its state overwrites dev."]:::issue
-    PLAN["QA planned — not yet created"]:::issue
+    SOLVED["Isolation by CONTAINER, not key:<br/>the key derives from the unit path only, so dev/aks and qa/aks<br/>resolve to the identical key — each environment writes to its own<br/>storage container, so the state blobs never collide."]:::service
 
     MODULES --> DUNITS
     MODULES --> QUNITS
     DUNITS --> DSTATE
     QUNITS --> QSTATE
-    RISK -.-> QSTATE
-    PLAN -.-> QA
+    SOLVED -.-> DSTATE
+    SOLVED -.-> QSTATE
 
     classDef external fill:#B4B2A9,stroke:#7A7870,color:#111,stroke-dasharray:4 3;
     classDef service fill:#1D9E75,stroke:#14795A,color:#FFF;
@@ -105,10 +104,9 @@ flowchart TB
 
 **What to notice**
 
-- **Modules are shared, environments differ only by inputs:** promotion means a second `environments/qa` tree that reuses `infrastructure/modules` with QA-specific inputs — not copied module code.
-- **The state key is the risk (red):** `root.hcl` derives the backend key from `path_relative_to_include()` — the **unit path only**, with no environment segment. A QA tree using the same backend container would produce identical keys (`aks/terraform.tfstate`, …) and **overwrite dev state**.
-- **The fix QA must adopt:** a distinct backend `container_name` or a per-environment key prefix, so dev and QA state can never collide.
-- **QA is planned, not built** — both the QA subgraph and the risk are drawn as red-dashed to keep that explicit.
+- **Modules are shared, environments differ only by inputs:** `environments/dev` and `environments/qa` are both built — each a tree of the same 18 units reusing `infrastructure/modules` with its own inputs, not copied module code.
+- **The state key is identical by design:** `root.hcl` derives the backend key from `path_relative_to_include()` — the **unit path only**, with no environment segment — so `dev/aks` and `qa/aks` both resolve to `aks/terraform.tfstate`.
+- **Isolation is by container, not by key:** each environment writes to its **own storage container** (dev → `tfstate`, qa → `tfstate-qa`), so the identical keys never collide. Changing the key expression to add an environment segment would **orphan the existing state blobs** — the container is the seam, and it is already in place.
 
 ## How it was built
 
@@ -121,4 +119,4 @@ flowchart TB
 
 ## Open items
 
-- The **QA environment is planned**, not built; the state-key collision risk above must be resolved before a second environment shares the backend. See the [Roadmap](../ROADMAP.md).
+- **Resolved:** `qa` is built alongside `dev`, and the state-key collision is handled by each environment using its own backend storage container (`tfstate` for dev, `tfstate-qa` for qa), so their identical keys never collide. See the [Roadmap](../ROADMAP.md).

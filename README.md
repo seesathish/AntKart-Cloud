@@ -6,7 +6,7 @@ A production-grade cloud-native platform on Azure — six .NET 9 microservices o
 
 AntKart is a **.NET 9** e-commerce platform of **six microservices** plus a **serverless notifications app**, running on **Azure Kubernetes Service**, provisioned with **Terraform and Terragrunt**, and delivered by **GitHub Actions and Argo CD**. This page is the front door: one diagram per topic, each linking into the [Development Guide](DevelopmentGuide.md) for the detail.
 
-**Live:** [https://api.antkart.in](https://api.antkart.in) — served over a trusted Let's Encrypt production TLS certificate. (An earlier Phase-1 build ran locally on Docker Compose in a separate repository — [AntKart-MS](https://github.com/seesathish/AntKart-MS); this repository is the cloud-native platform.)
+**Deployed to Azure** and served over a trusted Let's Encrypt production TLS certificate. Environments are stopped between sessions to control cost, so a running endpoint is not guaranteed at any given moment. (An earlier Phase-1 build ran locally on Docker Compose in a separate repository — [AntKart-MS](https://github.com/seesathish/AntKart-MS); this repository is the cloud-native platform.)
 
 ## System overview
 
@@ -32,7 +32,7 @@ Every service is the same inside: a dependency-free domain core, an application 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/C4Renders/renders/InfrastructureAsCode-dark.svg">
-  <img alt="AntKart infrastructure as code: shared reusable modules and one root.hcl config feed two environments — dev (delivered) and qa (planned, dashed) — each composing the same modules with its own inputs; an apply writes isolated per-unit state to Azure Storage and provisions the Azure resources, qa mirroring dev" src="docs/C4Renders/renders/InfrastructureAsCode.svg">
+  <img alt="AntKart infrastructure as code: shared reusable modules and one root.hcl config feed two environments — dev and qa — each composing the same modules with its own inputs; an apply writes isolated per-unit state to Azure Storage and provisions the Azure resources" src="docs/C4Renders/renders/InfrastructureAsCode.svg">
 </picture>
 
 Infrastructure is code, and a new environment is new inputs — not new code:
@@ -41,7 +41,9 @@ Infrastructure is code, and a new environment is new inputs — not new code:
 2. **Shared modules** — each environment's units compose the same reusable, versioned modules with that environment's own inputs.
 3. **Isolated state** — an apply provisions the Azure resources and records per-unit state (one leased blob per unit) in Azure Storage, in a resource group of its own.
 
-**QA is next.** It is drawn dashed because it reuses the same modules and the same root config with qa inputs. When it lands, its state key must use a distinct backend container or key prefix — the key is the unit path, so otherwise qa would overwrite dev state.
+**Two environments exist — `dev` and `qa`** — built from the same modules with different inputs. The state-key collision is a solved problem, not a future risk: Terragrunt derives each state blob's path from the unit's path relative to `root.hcl`, so `dev/aks` and `qa/aks` resolve to the *identical* key — isolation comes from each environment using its **own storage container**, not from changing the key expression (changing the key expression would orphan the existing state blobs). Provisioning runs in **four dependency waves** and produces **86 resources across 18 units** per environment; the [provisioning runbook](docs/guides/environment-provisioning-runbook.md) and its Appendix D carry the wave order and the full resource inventory.
+
+> The diagram above predates the qa build — it still draws qa as a dashed "planned" box, and must be redrawn in the Structurizr source repository. The prose here describes what actually exists.
 
 → [Infrastructure as code](docs/development/1-infrastructure-as-code.md)
 
@@ -98,6 +100,8 @@ The developer opens a pull request; from there delivery is automatic and pull-ba
 
 → [DevOps](docs/development/4-devops.md)
 
+> **The workflows in `.github/workflows/` are reference implementations.** The twelve pipelines (a CI + CD pair per service) are configured for the original private repository and **will not run as-is in this public copy** — they name repository secrets, repository variables, an OIDC federated credential, a SonarCloud project, and an Azure Container Registry that exist only in that setup, so they would fail on any push or pull request here (the Actions tab may show red). Running them requires an Azure subscription plus the federated credentials and repository secrets they name. See the [DevOps section](docs/development/4-devops.md), the [`.github/workflows/` guide](.github/workflows/README.md) for exactly what each workflow needs, and the [provisioning runbook](docs/guides/environment-provisioning-runbook.md).
+
 ## Observability
 
 <picture>
@@ -131,7 +135,7 @@ One gap is tracked rather than hidden: Discount decodes the caller's token but d
 ## Explore
 
 - [Development Guide](DevelopmentGuide.md) — how the platform is built, layer by layer.
-- [Testing](docs/test/README.md) — how it is verified: the automated `dotnet test` baseline (unit + integration) plus cloud-only end-to-end and security testing against the live platform at `api.antkart.in`.
+- [Testing](docs/test/README.md) — how it is verified: the automated `dotnet test` baseline (unit + integration) plus cloud-only end-to-end and security testing against the deployed platform at `api.antkart.in`.
 - [Environment Provisioning Runbook](docs/guides/environment-provisioning-runbook.md) — stand up a complete new environment from an empty subscription, step by step.
 - [Architect's Playbook](docs/ARCHITECT-PLAYBOOK.md) — every concept this platform uses, explained, with the gotchas that came from building it.
 - [Architecture decisions](docs/adr/README.md) — the ADRs and why each choice was made.
